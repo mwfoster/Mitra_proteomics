@@ -1,0 +1,220 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+# Loading packages
+library(readr)
+library(dplyr)
+
+# Import the nonlocalized TSV file
+
+nonlocalized_data <- "20250522_233958_PolyA_TiO_Report_precursor_noloc.tsv"
+nonlocalized_data <- read_tsv(nonlocalized_data)
+
+# Importing the second TSV file
+localized_data <- "20250522_233958_PolyA_TiO_Report_precursor_loc.tsv"
+localized_data <- read_tsv(localized_data)
+
+# View the first few rows of both datasets
+head(nonlocalized_data)
+head(localized_data)
+```
+combine protein name and site, charge
+```{r}
+# Step 1: Extract the two characters following the underscore in EG.PrecursorId
+nonlocalized_data$PrecursorSuffix <- sub(".*_(..)$", "\\1", nonlocalized_data$EG.PrecursorId)
+
+# Step 2: Combine PG.ProteinNames, EG.ProteinPTMLocations, and the two characters from EG.PrecursorId
+nonlocalized_data$Combined_Protein_Info <- paste(nonlocalized_data$PG.ProteinNames, 
+                                                 nonlocalized_data$EG.ProteinPTMLocations, 
+                                                 nonlocalized_data$PrecursorSuffix, 
+                                                 sep = "_")
+
+# Step 3: Reorder columns to make Combined_Protein_Info the first column
+nonlocalized_data <- nonlocalized_data %>%
+  select(Combined_Protein_Info, everything())
+
+# Step 4: View the new data frame with the combined column as the first column
+head(nonlocalized_data)
+```
+
+filter nonlocalized data to only include localized phos
+```{r}
+# Filter rows where at least two "PTMLocalizationProbabilities" columns are not "Filtered"
+filtered_localized_data <- localized_data %>%
+  filter(rowSums(select(., contains("PTMLocalizationProbabilities")) != "Filtered", na.rm = TRUE) >= 1)
+
+# View the filtered dataset
+head(filtered_localized_data)
+
+# Assuming both data frames have a common column to join on, e.g., "id"
+filtered_nonlocalized_data <- nonlocalized_data %>%
+  filter(EG.PrecursorId %in% filtered_localized_data$EG.PrecursorId)
+
+# View the filtered data
+head(filtered_nonlocalized_data)
+```
+Identify abundance columns
+```{r}
+# Identify columns that contain "TotalQuantity" in the column name for filtered_nonlocalized_data
+total_quantity_columns_filtered <- grep("TotalQuantity", colnames(filtered_nonlocalized_data), value = TRUE)
+
+# View the columns found in filtered_nonlocalized_data
+total_quantity_columns_filtered
+```
+```{r}
+# Loop over each "TotalQuantity" column in filtered_nonlocalized_data
+for (col in total_quantity_columns_filtered) {
+  # Get the column values
+  column_values <- filtered_nonlocalized_data[[col]]
+  
+  # Filter out rows with 0 or "Filtered"
+  valid_rows <- !(column_values %in% c('0', "Filtered"))
+  
+  # Count the number of valid rows (excluding 0 and "Filtered")
+  valid_row_count <- sum(valid_rows)
+  
+  # Calculate the sum of valid rows (excluding 0 and "Filtered")
+  valid_row_sum <- sum(as.numeric(column_values[valid_rows]), na.rm = TRUE)
+  
+  # Print the results for the current column
+  cat("Column:", col, "\n")
+  cat("  Valid Row Count (excluding '0', 'Filtered'):", valid_row_count, "\n")
+  cat("  Sum of Valid Rows (excluding '0', 'Filtered'):", valid_row_sum, "\n\n")
+}
+
+
+```
+
+#Count valid phospho precursors rows based on number
+
+```{r}
+  
+# Filter rows where EG.PrecursorId contains "Phospho"
+filtered_phospho_data <- filtered_nonlocalized_data[grepl("Phospho", filtered_nonlocalized_data$EG.PrecursorId), ]
+
+# Loop over each "TotalQuantity" column in the filtered_phospho_data
+for (col in total_quantity_columns_filtered) {
+  # Get the column values
+  column_values <- filtered_phospho_data[[col]]
+  
+  # Filter out rows with 0, 1, or "Filtered"
+  valid_rows <- !(column_values %in% c(0, 1, "Filtered"))
+  
+  # Count the number of valid rows (excluding 0, 1, and "Filtered")
+  valid_row_count <- sum(valid_rows)
+  
+  # Calculate the sum of valid rows (excluding 0, 1, and "Filtered")
+  valid_row_sum <- sum(as.numeric(column_values[valid_rows]), na.rm = TRUE)
+  
+  # Print the results for the current column
+  cat("Column:", col, "\n")
+  cat("  Valid Row Count (excluding 0, 1, 'Filtered') in Phospho rows:", valid_row_count, "\n")
+  cat("  Sum of Valid Rows (excluding 0, 1, 'Filtered') in Phospho rows:", valid_row_sum, "\n\n")
+}
+
+```
+
+#Count valid phospho precursors rows based on intensity
+
+```{r}
+# Loop over each "TotalQuantity" column in the filtered_nonlocalized_data
+for (col in total_quantity_columns_filtered) {
+  
+  # Get the column values
+  column_values <- filtered_nonlocalized_data[[col]]
+  
+  # Total number of rows in the full dataset
+  total_rows <- nrow(filtered_nonlocalized_data)
+  
+  # Count of rows containing "Phospho" in EG.PrecursorId
+  phospho_rows <- sum(grepl("Phospho", filtered_nonlocalized_data$EG.PrecursorId))
+  
+  # Percent of Phospho rows out of total rows
+  percent_phospho_rows <- (phospho_rows / total_rows) * 100
+  
+  # Total abundance (sum of values in the column)
+  total_abundance <- sum(as.numeric(column_values), na.rm = TRUE)
+  
+  # Get the phospho values from rows where EG.PrecursorId contains "Phospho"
+  phospho_column_values <- column_values[grepl("Phospho", filtered_nonlocalized_data$EG.PrecursorId)]
+  
+  # Total phospho abundance
+  total_phospho_abundance <- sum(as.numeric(phospho_column_values), na.rm = TRUE)
+  
+  # Percent of Phospho abundance out of total abundance
+  percent_phospho_abundance <- (total_phospho_abundance / total_abundance) * 100
+  
+  # Print the results for the current column
+  cat("Column:", col, "\n")
+  cat("  Percent of Phospho rows out of total rows:", round(percent_phospho_rows, 2), "%\n")
+  cat("  Percent of Phospho abundance out of total abundance:", round(percent_phospho_abundance, 2), "%\n\n")
+}
+```
+
+```{r}
+# Initialize an empty list to store the results
+results <- list()
+
+# Loop over each "TotalQuantity" column in filtered_nonlocalized_data
+for (col in total_quantity_columns_filtered) {
+  # Get the column values
+  column_values <- filtered_nonlocalized_data[[col]]
+  
+  # Filter out rows with 0, 1, or "Filtered"
+  valid_rows <- !(column_values %in% c(0, 1, "Filtered"))
+  
+  # Filtered data based on valid rows
+  filtered_data <- filtered_nonlocalized_data[valid_rows, ]
+  
+  # Total number of valid rows (excluding 0, 1, and "Filtered")
+  total_rows <- nrow(filtered_data)
+  
+  # Count of phospho rows in EG.PrecursorId after filtering valid rows
+  phospho_rows <- sum(grepl("Phospho", filtered_data$EG.PrecursorId))
+  
+  # Percent of Phospho rows out of total valid rows
+  percent_phospho_rows <- (phospho_rows / total_rows) * 100
+  
+  # Total abundance (sum of values in the column, excluding invalid rows)
+  total_abundance <- sum(as.numeric(column_values[valid_rows]), na.rm = TRUE)
+  
+  # Get the phospho values from the filtered data
+  phospho_column_values <- column_values[valid_rows & grepl("Phospho", filtered_data$EG.PrecursorId)]
+  
+  # Total phospho abundance (sum of phospho values)
+  phospho_abundance <- sum(as.numeric(phospho_column_values), na.rm = TRUE)
+  
+  # Percent of Phospho abundance out of total abundance
+  percent_phospho_abundance <- ifelse(total_abundance != 0, (phospho_abundance / total_abundance) * 100, 0)
+  
+  # Store the results in the list
+  results[[col]] <- list(
+    Total_Rows = total_rows,
+    Phospho_Rows = phospho_rows,
+    Percent_Phospho_Rows = round(percent_phospho_rows, 2),
+    Total_Abundance = total_abundance,
+    Phospho_Abundance = phospho_abundance,
+    Percent_Phospho_Abundance = round(percent_phospho_abundance, 2)
+  )
+}
+
+# Convert the list into a data frame
+results_df <- do.call(rbind, lapply(results, data.frame, stringsAsFactors = FALSE))
+
+# Save the results to a CSV file
+write.csv(results_df, "PolyA_TiO_phospho_summary.csv", row.names = TRUE)
+
+# Export the filtered_nonlocalized_data to a TSV file
+write.table(filtered_nonlocalized_data, "PolyA_TiO_filtered_nonlocalized_data.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+
+write.table(filtered_data, "PolyA_TiO_filtered_data.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+
+
+```
