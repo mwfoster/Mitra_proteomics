@@ -1,0 +1,60 @@
+---
+title: "Oxoscan data extraction"
+author: "Matt Foster"
+date: "2025-05-23"
+output: html_document
+---
+
+```{r extract-pad-sum-save, message=FALSE, warning=FALSE}
+library(tidyverse)
+
+# Use current working directory
+folder_path <- getwd()
+
+# List all .txt files
+txt_files <- list.files(path = folder_path, pattern = "\\.txt$", full.names = TRUE)
+
+# Extract 204.087 column with name and store length
+extracted_list <- list()
+max_len <- 0
+
+for (file_path in txt_files) {
+  df <- read.table(file_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE, check.names = FALSE)
+  
+  if (!"204.087" %in% colnames(df)) {
+    stop(paste("Column 204.087 not found in", file_path))
+  }
+  
+  # Shortened name: first 2 parts of filename
+  short_name <- strsplit(basename(file_path), "_")[[1]] %>%
+    .[1:2] %>%
+    paste(collapse = "_")
+  
+  values <- df[["204.087"]]
+  extracted_list[[short_name]] <- values
+  max_len <- max(max_len, length(values))
+}
+
+# Pad each column to max_len with NA
+padded_list <- lapply(extracted_list, function(x) {
+  length(x) <- max_len  # this pads with NAs
+  x
+})
+
+# Combine into matrix
+merged_matrix <- as_tibble(padded_list)
+
+# Save full merged matrix
+write.csv(merged_matrix, "merged_204.087_matrix.csv", row.names = FALSE)
+
+# Sum columns (ignoring NAs)
+column_sums <- colSums(merged_matrix, na.rm = TRUE)
+
+# Save column sums
+sum_df <- tibble(Sample = names(column_sums), Total_204.087 = as.numeric(column_sums))
+write.csv(sum_df, "204.087_column_sums.csv", row.names = FALSE)
+
+# Preview result
+print(sum_df)
+```
+
