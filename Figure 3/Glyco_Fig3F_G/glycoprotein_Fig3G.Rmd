@@ -1,0 +1,153 @@
+---
+title: "glycoprotein_Fig3G"
+author: "Your Name"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r full-analysis, echo=TRUE, warning=FALSE, message=FALSE}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+```
+
+##process Ti_IMAC
+```{r full-analysis, echo=TRUE, warning=FALSE, message=FALSE}
+# Read and preprocess the Ti_IMAC data
+Ti_IMAC_glycan <- read_csv("Ti_IMAC_glycan.csv")
+Ti_IMAC_glycan <- Ti_IMAC_glycan %>%
+  dplyr::select(File, Glycan_Composition, Percent_Relative_Abundance_in_Sample)
+
+Ti_IMAC_glycan$Glycan_Composition <- gsub("Hex", "H", gsub("HexNAc", "N", gsub("NeuAc", "S", gsub("Fuc", "F", Ti_IMAC_glycan$Glycan_Composition))))
+
+# Convert to wide format
+wide_Ti_IMAC_glycan <- Ti_IMAC_glycan %>%
+  pivot_wider(names_from = File, values_from = Percent_Relative_Abundance_in_Sample, names_prefix = "Percent_Relative_Abundance_in_Sample_")
+
+# Filter out rows with NA values
+Ti_IMAC_glycan_noNA <- wide_Ti_IMAC_glycan %>%
+  filter(complete.cases(.))
+
+# Calculate average and standard deviation for each protein
+Ti_IMAC_glycan_stats <- Ti_IMAC_glycan_noNA %>%
+  rowwise() %>%
+  mutate(
+    avg_pct_rel_abundance_Ti_IMAC_glycan = mean(c_across(starts_with("Percent_Relative_Abundance_in_Sample")), na.rm = TRUE),
+    sd_pct_rel_abundance_Ti_IMAC_glycan  = sd(c_across(starts_with("Percent_Relative_Abundance_in_Sample")), na.rm = TRUE)
+  ) %>%
+  dplyr::select(Glycan_Composition, avg_pct_rel_abundance_Ti_IMAC_glycan, sd_pct_rel_abundance_Ti_IMAC_glycan)
+
+
+```
+
+##process PolyA_rep1_glycan
+
+```{r full-analysis, echo=TRUE, warning=FALSE, message=FALSE}
+# Read and preprocess the Ti_IMAC data
+PolyA_rep1_glycan <- read_csv("PolyA_rep1_glycan.csv")
+PolyA_rep1_glycan <- PolyA_rep1_glycan %>%
+  dplyr::select(File, Glycan_Composition, Percent_Relative_Abundance_in_Sample)
+
+PolyA_rep1_glycan$Glycan_Composition <- gsub("Hex", "H", gsub("HexNAc", "N", gsub("NeuAc", "S", gsub("Fuc", "F", PolyA_rep1_glycan$Glycan_Composition))))
+
+# Convert to wide format
+wide_PolyA_rep1_glycan <- PolyA_rep1_glycan %>%
+  pivot_wider(names_from = File, values_from = Percent_Relative_Abundance_in_Sample, names_prefix = "Percent_Relative_Abundance_in_Sample")
+
+# Filter out rows with NA values
+PolyA_rep1_glycan_noNA <- wide_PolyA_rep1_glycan %>%
+  filter(complete.cases(.))
+
+# Calculate average and standard deviation for each protein
+PolyA_rep1_glycan_stats <- PolyA_rep1_glycan_noNA %>%
+  rowwise() %>%
+  mutate(
+    avg_pct_rel_abundance_PolyA_rep1_glycan = mean(c_across(starts_with("Percent_Relative_Abundance_in_Sample")), na.rm = TRUE),
+    sd_pct_rel_abundance_PolyA_rep1_glycan  = sd(c_across(starts_with("Percent_Relative_Abundance_in_Sample")), na.rm = TRUE)
+  ) %>%
+  dplyr::select(Glycan_Composition, avg_pct_rel_abundance_PolyA_rep1_glycan, sd_pct_rel_abundance_PolyA_rep1_glycan)
+```
+
+##process PolyA_rep2_glycan
+
+```{r}
+# Read and preprocess the Ti_IMAC data
+PolyA_rep2_glycan <- read_csv("PolyA_rep2_glycan.csv")
+PolyA_rep2_glycan <- PolyA_rep2_glycan %>%
+  dplyr::select(File, Glycan_Composition, Percent_Relative_Abundance_in_Sample)
+
+PolyA_rep2_glycan$Glycan_Composition <- gsub("Hex", "H", gsub("HexNAc", "N", gsub("NeuAc", "S", gsub("Fuc", "F", PolyA_rep2_glycan$Glycan_Composition))))
+
+# Convert to wide format
+wide_PolyA_rep2_glycan <- PolyA_rep2_glycan %>%
+  pivot_wider(names_from = File, values_from = Percent_Relative_Abundance_in_Sample, names_prefix = "Percent_Relative_Abundance_in_Sample")
+
+# Filter out rows with NA values
+PolyA_rep2_glycan_noNA <- wide_PolyA_rep2_glycan %>%
+  filter(complete.cases(.))
+
+# Calculate average and standard deviation for each protein
+PolyA_rep2_glycan_stats <- PolyA_rep2_glycan_noNA %>%
+  rowwise() %>%
+  mutate(
+    avg_pct_rel_abundance_PolyA_rep2_glycan = mean(c_across(starts_with("Percent_Relative_Abundance_in_Sample")), na.rm = TRUE),
+    sd_pct_rel_abundance_PolyA_rep2_glycan  = sd(c_across(starts_with("Percent_Relative_Abundance_in_Sample")), na.rm = TRUE)
+  ) %>%
+  dplyr::select(Glycan_Composition, avg_pct_rel_abundance_PolyA_rep2_glycan, sd_pct_rel_abundance_PolyA_rep2_glycan)
+```
+
+##merge and plot
+```{r full-analysis, echo=TRUE, warning=FALSE, message=FALSE}
+
+# Merge all conditions
+merged_stats <- Ti_IMAC_glycan_stats %>%
+  inner_join(PolyA_rep1_glycan_stats, by = "Glycan_Composition") %>%
+  inner_join(PolyA_rep2_glycan_stats, by = "Glycan_Composition")
+
+write.table(merged_stats, "merged_glycan_stats.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+
+top_indices <- order(Ti_IMAC_glycan_stats$avg_pct_rel_abundance_Ti_IMAC_glycan, decreasing = TRUE)[1:20]
+top_Glycan_Compositions <- Ti_IMAC_glycan_stats$Glycan_Composition[top_indices]
+
+# Reshape and filter only top 20 proteins
+long_stats <- merged_stats %>%
+  filter(Glycan_Composition %in% top_Glycan_Compositions) %>%
+  pivot_longer(cols = starts_with("avg_pct_rel"),
+               names_to = "Condition",
+               values_to = "avg_pct_rel_glycan_abundance") %>%
+  pivot_longer(cols = starts_with("sd_pct_rel"),
+               names_to = "Condition_sd",
+               values_to = "sd_pct_rel_glycan_abundance") %>%
+  mutate(
+    Condition = str_replace(Condition, "avg_pct_rel_", ""),
+    Condition_sd = str_replace(Condition_sd, "sd_pct_rel_", "")
+  ) %>%
+  filter(Condition == Condition_sd) %>%
+  mutate(Glycan_Composition = factor(Glycan_Composition, levels = top_Glycan_Compositions)) %>%
+  dplyr::select(-Condition_sd)
+
+# Create the point plot with error bars
+plot <- ggplot(long_stats, aes(x = avg_pct_rel_glycan_abundance, y = reorder(Glycan_Composition, avg_pct_rel_glycan_abundance), color = Condition)) +
+  geom_point(size = 1, alpha = 0.5) +
+  geom_errorbarh(aes(xmin = avg_pct_rel_glycan_abundance - sd_pct_rel_glycan_abundance,
+                     xmax = avg_pct_rel_glycan_abundance + sd_pct_rel_glycan_abundance), height = 0.2) +
+  labs(x = "Mean % Glycan Abundance", y = "Glycan",
+       color = "Condition") +
+  scale_x_continuous(breaks = seq(0, max(long_stats$avg_pct_rel_glycan_abundance, na.rm = TRUE), by = 10)) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 0, size = 6, face = "bold"),
+    axis.text.y = element_text(size = 6, face = "bold"),
+    axis.title.x = element_text(size = 6, face = "bold", margin = margin(t = -5)),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    plot.title = element_text(size = 8, face = "bold"),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size = 7, face = "bold"),
+    legend.position = "none"
+  )
+
+# Save the plot
+ggsave("glycan_percentage_with_error_bars.svg", plot, width = 2, height = 2, units = "in", dpi = 600)
+```

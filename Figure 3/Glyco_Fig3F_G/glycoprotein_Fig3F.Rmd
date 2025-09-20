@@ -1,0 +1,148 @@
+---
+title: "Glycoprotein_Fig3F"
+author: "Matt Foster"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r full-analysis, echo=TRUE, warning=FALSE, message=FALSE}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+```
+
+##process Ti_IMAC
+```{r full-analysis, echo=TRUE, warning=FALSE, message=FALSE}
+# Read and preprocess the Ti_IMAC data
+Ti_IMAC <- read_csv("Ti_IMAC.csv")
+Ti_IMAC <- Ti_IMAC %>%
+  dplyr::select(File, Protein_Name, Number_Site_Specific_Glycan)
+
+# Convert to wide format
+wide_Ti_IMAC <- Ti_IMAC %>%
+  pivot_wider(names_from = File, values_from = Number_Site_Specific_Glycan, names_prefix = "num_site_specific_glycans_")
+
+# Filter out rows with NA values
+Ti_IMAC_noNA <- wide_Ti_IMAC %>%
+  filter(complete.cases(.))
+
+# Calculate average and standard deviation for each protein
+Ti_IMAC_stats <- Ti_IMAC_noNA %>%
+  rowwise() %>%
+  mutate(
+    avg_site_specific_glycans_Ti_IMAC = mean(c_across(starts_with("num_site_specific_glycans_")), na.rm = TRUE),
+    sd_site_specific_glycans_Ti_IMAC  = sd(c_across(starts_with("num_site_specific_glycans_")), na.rm = TRUE)
+  ) %>%
+  select(Protein_Name, avg_site_specific_glycans_Ti_IMAC, sd_site_specific_glycans_Ti_IMAC)
+
+```
+
+##process PolyA_rep1_glycan
+
+```{r full-analysis, echo=TRUE, warning=FALSE, message=FALSE}
+# Read and preprocess the PolyA_rep1 data
+PolyA_rep1 <- read_csv("PolyA_rep1.csv")
+PolyA_rep1 <- PolyA_rep1 %>%
+  select(File, Protein_Name, Number_Site_Specific_Glycan)
+
+# Convert to wide format
+wide_PolyA_rep1 <- PolyA_rep1 %>%
+  pivot_wider(names_from = File, values_from = Number_Site_Specific_Glycan, names_prefix = "num_site_specific_glycans_")
+
+# Filter out rows with NA values
+PolyA_rep1_noNA <- wide_PolyA_rep1 %>%
+  filter(complete.cases(.))
+
+# Calculate average and standard deviation for each protein
+PolyA_rep1_stats <- PolyA_rep1_noNA %>%
+  rowwise() %>%
+  mutate(
+    avg_site_specific_glycans_PolyA_rep1 = mean(c_across(starts_with("num_site_specific_glycans_")), na.rm = TRUE),
+    sd_site_specific_glycans_PolyA_rep1  = sd(c_across(starts_with("num_site_specific_glycans_")), na.rm = TRUE)
+  ) %>%
+  select(Protein_Name, avg_site_specific_glycans_PolyA_rep1, sd_site_specific_glycans_PolyA_rep1)
+```
+
+##process PolyA_rep2_glycan
+
+```{r}
+# Read and preprocess the PolyA_rep2 data
+PolyA_rep2 <- read_csv("PolyA_rep2.csv")
+PolyA_rep2 <- PolyA_rep2 %>%
+  select(File, Protein_Name, Number_Site_Specific_Glycan)
+
+# Convert to wide format
+wide_PolyA_rep2 <- PolyA_rep2 %>%
+  pivot_wider(names_from = File, values_from = Number_Site_Specific_Glycan, names_prefix = "num_site_specific_glycans_")
+
+# Filter out rows with NA values
+PolyA_rep2_noNA <- wide_PolyA_rep2 %>%
+  filter(complete.cases(.))
+
+# Calculate average and standard deviation for each protein
+PolyA_rep2_stats <- PolyA_rep2_noNA %>%
+  rowwise() %>%
+  mutate(
+    avg_site_specific_glycans_PolyA_rep2 = mean(c_across(starts_with("num_site_specific_glycans_")), na.rm = TRUE),
+    sd_site_specific_glycans_PolyA_rep2  = sd(c_across(starts_with("num_site_specific_glycans_")), na.rm = TRUE)
+  ) %>%
+  select(Protein_Name, avg_site_specific_glycans_PolyA_rep2, sd_site_specific_glycans_PolyA_rep2)
+
+```
+
+##merge and plot
+```{r full-analysis, echo=TRUE, warning=FALSE, message=FALSE}
+
+# Merge all conditions
+merged_stats <- Ti_IMAC_stats %>%
+  inner_join(PolyA_rep1_stats, by = "Protein_Name") %>%
+  inner_join(PolyA_rep2_stats, by = "Protein_Name")
+
+write.table(merged_stats, "merged_protein_stats.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+
+top_indices <- order(PolyA_rep1_stats$avg_site_specific_glycans_PolyA_rep1, decreasing = TRUE)[1:20]
+top_proteins <- PolyA_rep1_stats$Protein_Name[top_indices]
+
+# Reshape and filter only top 20 proteins
+long_stats <- merged_stats %>%
+  filter(Protein_Name %in% top_proteins) %>%
+  pivot_longer(cols = starts_with("avg_site_specific_glycans"),
+               names_to = "Condition",
+               values_to = "avg_site_specific_glycans") %>%
+  pivot_longer(cols = starts_with("sd_site_specific_glycans"),
+               names_to = "Condition_sd",
+               values_to = "sd_site_specific_glycans") %>%
+  mutate(
+    Condition = str_replace(Condition, "avg_site_specific_", ""),
+    Condition_sd = str_replace(Condition_sd, "sd_site_specific_", "")
+  ) %>%
+  filter(Condition == Condition_sd) %>%
+  mutate(Protein_Name = factor(Protein_Name, levels = top_proteins)) %>%
+  dplyr::select(-Condition_sd)
+
+# Create the point plot with error bars
+plot <- ggplot(long_stats, aes(x = avg_site_specific_glycans, y = reorder(Protein_Name, avg_site_specific_glycans), color = Condition)) +
+  geom_point(size = 1, alpha = 0.5) +
+  geom_errorbarh(aes(xmin = avg_site_specific_glycans - sd_site_specific_glycans,
+                     xmax = avg_site_specific_glycans + sd_site_specific_glycans), height = 0.2) +
+  labs(x = "Mean Site-Specific Glycans", y = "Protein Name",
+       color = "Condition") +
+  scale_x_continuous(breaks = seq(0, max(long_stats$avg_site_specific_glycans, na.rm = TRUE), by = 25)) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 0, size = 6, face = "bold"),
+    axis.text.y = element_text(size = 6, face = "bold"),
+    axis.title.x = element_text(size = 6, face = "bold", margin = margin(t = -5)),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    plot.title = element_text(size = 8, face = "bold"),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size = 7, face = "bold"),
+    legend.position = "none"
+  )
+
+
+# Save the plot
+ggsave("protein_avg_site_specific_glycans_with_error_bars.svg", plot, width = 3.5, height = 2, units = "in", dpi = 600)
+```
