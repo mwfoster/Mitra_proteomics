@@ -1,0 +1,131 @@
+---
+title: "Combine Glyco Summary Files into a Matrix"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# A helper function to trim whitespace
+trim <- function(x) {
+  gsub("^\\s+|\\s+$", "", x)
+}
+
+# Function to process one file
+process_file <- function(file) {
+  # Read all lines from the file and skip the first 3 lines
+  lines <- readLines(file)
+  if(length(lines) <= 3) stop("File has too few lines!")
+  lines <- lines[-(1:3)]
+  
+  # The first line (A4) is assumed to be the header row.
+  header_line <- lines[1]
+  header_fields <- unlist(strsplit(header_line, "\t"))
+  # Rename the first header to "Scan/Ion"
+  header_fields[1] <- "Scan/Ion"
+  
+  # List to store processed rows (first row is header)
+  processed_rows <- list(header_fields)
+  
+  # Initialize current group as NA
+  current_group <- NA
+  
+  # Process each subsequent line (preserving order)
+  for(i in 2:length(lines)) {
+    line <- lines[i]
+    
+    # Check for group header rows (starting with backslashes)
+    if(grepl("^\\\\+", line)) {
+      # Remove backslashes and trim to obtain group name (e.g., "HexNAc")
+      grp <- trim(gsub("\\\\", "", line))
+      if(nchar(grp) > 0) {
+        current_group <- grp
+      }
+      # Do not add the group header line to data rows
+      next
+    }
+    
+    # (Optional) Skip repeated header rows
+    if(trim(line) == trim(header_line)) next
+    
+    # Split the line into fields using tab as delimiter
+    fields <- unlist(strsplit(line, "\t"))
+    # Skip if there are too few fields
+    if(length(fields) < 3) next
+    
+    # Prepend the group name (if available) to the first field, unless already present
+    if(!is.na(current_group)) {
+      if(!grepl(current_group, fields[1], ignore.case = TRUE)) {
+        fields[1] <- paste(current_group, fields[1], sep=": ")
+      }
+    }
+    
+    processed_rows[[length(processed_rows) + 1]] <- fields
+  }
+  
+  # Pad rows to have the same number of columns
+  max_cols <- max(sapply(processed_rows, length))
+  processed_rows <- lapply(processed_rows, function(x) { length(x) <- max_cols; x })
+  
+  # Convert the list of rows into a data frame
+  df <- as.data.frame(do.call(rbind, processed_rows), stringsAsFactors = FALSE)
+  # Use the first row as column names, then remove it from the data
+  colnames(df) <- df[1, ]
+  df <- df[-1, ]
+  
+  # Keep only the columns "Scan/Ion", "Total", and "%Total"
+  cols_to_keep <- c("Scan/Ion", "Total", "%Total")
+  df <- df[, cols_to_keep, drop = FALSE]
+  
+  # Extract the file prefix (up to second underscore)
+ prefix <- sub("^([^_]*_[^_]*)_.*$", "\\1", basename(file))
+  
+  # Rename the "Total" and "%Total" columns by adding the prefix
+  colnames(df)[colnames(df) == "Total"] <- paste0(prefix, "_Total")
+  colnames(df)[colnames(df) == "%Total"] <- paste0(prefix, "_%Total")
+  
+  return(df)
+}
+
+# List all text files (adjust the pattern if needed)
+files <- list.files(pattern = "\\.txt$")
+
+# Process each file and store the results in a list
+data_list <- lapply(files, process_file)
+
+# Combine the data frames assuming that the "Scan/Ion" column is identical and in the same order.
+if(length(data_list) > 0) {
+  combined_df <- data_list[[1]]
+  if(length(data_list) > 1) {
+    for(i in 2:length(data_list)) {
+      if(!all(combined_df$`Scan/Ion` == data_list[[i]]$`Scan/Ion`)) {
+        stop("The 'Scan/Ion' values do not match across files!")
+      }
+      # Append the numeric columns (excluding "Scan/Ion") from each subsequent file
+      combined_df <- cbind(combined_df, data_list[[i]][, -1, drop = FALSE])
+    }
+  }
+  
+  ## Group the numeric columns:
+  # Extract column names corresponding to the "Total" and "%Total" values
+  total_cols <- grep("_Total$", colnames(combined_df), value = TRUE)
+  pcttotal_cols <- grep("_%Total$", colnames(combined_df), value = TRUE)
+  
+  # Reorder columns so that the first column remains "Scan/Ion",
+  # then all "Total" columns, followed by all "%Total" columns.
+  combined_df <- combined_df[, c("Scan/Ion", total_cols, pcttotal_cols)]
+  
+  # Convert the numeric portion of the data frame into a matrix.
+  # Row names will be the "Scan/Ion" column.
+  combined_matrix <- as.matrix(combined_df[, -1, drop = FALSE])
+  rownames(combined_matrix) <- combined_df$`Scan/Ion`
+  
+  # Display the combined data frame and the matrix.
+  print("Combined Data Frame:")
+  print(combined_df)
+  
+  print("Combined Matrix (numeric columns only):")
+  print(combined_matrix)
+}
+
+write.csv(combined_df, "combined_Glycounter_results.csv", row.names = FALSE)
+```
+
