@@ -1,0 +1,120 @@
+---
+title: "11011_phosoho_PTMsite"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+# Loading packages
+library(readr)
+library(dplyr)
+library(stringr)
+
+# Import the nonlocalized TSV file
+
+nonlocalized_data <- "20250819_004506_6010_TimsTof_Phos_SN19_25_3_Report_impute_noloc.tsv"
+nonlocalized_data <- read_tsv(nonlocalized_data)
+
+# Importing the second TSV file
+localized_data <- "20250819_004506_6010_TimsTof_Phos_SN19_25_3_Report_impute_loc.tsv"
+localized_data <- read_tsv(localized_data)
+
+# View the first few rows of both datasets
+head(nonlocalized_data)
+head(localized_data)
+```
+
+Add protein name to PTM.CollapseKey
+```{r}
+
+# Step 1: Replace text before the first "_" in PTM.CollapseKey with cleaned PG.ProteinNames
+# Remove everything from the first "_" onward in PG.ProteinNames
+localized_data$PG.ProteinNames_clean <- sub("_.*", "", localized_data$PG.ProteinNames)
+nonlocalized_data$PG.ProteinNames_clean <- sub("_.*", "", nonlocalized_data$PG.ProteinNames)
+
+localized_data$PTM.CollapseKey <- paste0(
+  localized_data$PG.ProteinNames_clean, "_",
+  str_extract(localized_data$PTM.CollapseKey, "(?<=_).*")
+)
+
+nonlocalized_data$PTM.CollapseKey <- paste0(
+  nonlocalized_data$PG.ProteinNames_clean, "_",
+  str_extract(nonlocalized_data$PTM.CollapseKey, "(?<=_).*")
+)
+
+# Step 2: Reorder columns to make PTM.CollapseKey the first column
+localized_data <- localized_data %>%
+  select(PTM.CollapseKey, everything())
+
+nonlocalized_data <- nonlocalized_data %>%
+  select(PTM.CollapseKey, everything())
+
+# Step 3: Inspect
+head(localized_data)
+```
+
+filter nonlocalized data to only include localized phos
+```{r}
+# Filter rows where at least 4 "PTM.Quantity" columns are not "Filtered"
+filtered_localized_data <- localized_data %>%
+  dplyr::filter(rowSums(dplyr::select(., contains("PTM.Quantity")) != "Filtered", na.rm = TRUE) >= 4)
+
+# View the filtered dataset
+head(filtered_localized_data)
+
+# Assuming both data frames have a common column to join on, e.g., "id"
+filtered_data <- nonlocalized_data %>%
+  filter(PTM.CollapseKey %in% filtered_localized_data$PTM.CollapseKey)
+
+# Keep only rows where "EG.PrecursorId" contains "Phospho"
+phospho_rows <- grepl("Phospho", filtered_data$PTM.ModificationTitle)
+
+# Combine the conditions: valid rows and phospho rows
+filtered_data <- filtered_data[phospho_rows, ]
+
+# View the filtered data
+head(filtered_data)
+```
+Identify abundance columns
+```{r}
+
+# Identify columns that contain "PTM.Quantity" in the column name for filtered_nonlocalized_data
+total_quantity_columns_filtered <- grep("PTM.Quantity", colnames(filtered_data), value = TRUE)
+
+# View the columns found in filtered_nonlocalized_data
+total_quantity_columns_filtered
+
+```
+#combine redundant rows
+```{r}
+
+# Identify all PTM.Quantity columns
+ptm_quantity_cols <- grep("PTM.Quantity", names(filtered_data), value = TRUE)
+
+# Define grouping columns (PG.Genes + PTM.Quantity columns)
+group_cols <- c("PG.Genes", ptm_quantity_cols)
+
+# Group by and summarize site locations
+collapsed <- filtered_data %>%
+  group_by(across(all_of(group_cols))) %>%
+  summarise(
+    PTM.SiteLocation = paste(sort(unique(PTM.SiteLocation)), collapse = ";"),
+    .groups = "drop"
+  )
+
+# Merge back with original to get one representative row per group
+filtered_data_nonredundant <- filtered_data %>%
+  distinct(across(all_of(group_cols)), .keep_all = TRUE) %>%
+  inner_join(collapsed, by = group_cols)
+
+# Update PTM.CollapseKey
+filtered_data_nonredundant <- filtered_data_nonredundant %>%
+  mutate(PTM.CollapseKey = paste0(PTM.CollapseKey, "_", PTM.SiteLocation.y))
+
+# Export the data to a TSV file
+write.table(filtered_data_nonredundant, "6010_TimsTOF_PTMsite_4_sum_filtered_data_impute.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+
+```
