@@ -1,0 +1,450 @@
+---
+title: "MOFA2 analysis"
+author: "Matt"
+date: "2024-09-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+##Install via bioconductor
+
+Uses baslisk to set up Python environment
+```{r}
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+    #install.packages("BiocManager")
+
+#BiocManager::install("MOFA2")
+```
+##load libraries
+```{r}
+library(data.table)
+library(MOFA2)
+```
+#load data
+```{r}
+# Load datasets without setting row names automatically
+unenriched <- read.csv("wetblood_unenriched_MOFA.csv", header = TRUE, check.names = FALSE)
+glyco <- read.csv("wetblood_glyco_MOFA.csv", header = TRUE, check.names = FALSE)
+phos <- read.csv("wetblood_phospho_TiO_MOFA.csv", header = TRUE, check.names = FALSE)
+
+# Inspect the first few rows to confirm the data structure
+head(unenriched)
+head(glyco)
+head(phos)
+```
+
+```{r}
+
+# Preprocessing function to handle duplicates and retain 'Accession'
+prepare_data <- function(data) {
+  # Ensure 'Accession' is a character column
+  data$Accession <- as.character(data$Accession)
+  
+  # Check for the presence of the 'Accession' column
+  if (!"Accession" %in% colnames(data)) {
+    stop("The dataset does not have an 'Accession' column.")
+  }
+  
+  # Make 'Accession' unique
+  data$Accession <- make.unique(data$Accession)
+  
+  # Set row names to 'Accession'
+  rownames(data) <- data$Accession
+  
+  # Remove the 'Accession' column and convert to a matrix
+  data_matrix <- as.matrix(data[, -which(names(data) == "Accession")])
+  
+  return(list(data_matrix = data_matrix, accession = data$Accession))
+}
+
+# Apply the preprocessing function to each dataset
+unenriched_prepared <- prepare_data(unenriched)
+glyco_prepared <- prepare_data(glyco)
+phos_prepared <- prepare_data(phos)
+
+# Extract the processed matrices and updated Accession
+unenriched_matrix <- unenriched_prepared$data_matrix
+glyco_matrix <- glyco_prepared$data_matrix
+phos_matrix <- phos_prepared$data_matrix
+
+# Optional: Access updated Accession names
+unenriched_accession <- unenriched_prepared$accession
+glyco_accession <- glyco_prepared$accession
+phos_accession <- phos_prepared$accession
+
+```
+#log2 transform
+```{r}
+# Function to apply log2 normalization
+log2_normalize <- function(data_matrix) {
+  log2(data_matrix + 1)
+}
+
+# Apply log2 transformation
+unenriched_matrix <- log2_normalize(unenriched_matrix)
+glyco_matrix <- log2_normalize(glyco_matrix)
+phos_matrix <- log2_normalize(phos_matrix)
+
+```
+#create data list
+```{r}
+# Create the data list
+data_list <- list(
+  Unenriched = unenriched_matrix,
+  Glyco = glyco_matrix,
+  Phospho = phos_matrix
+)
+
+# Verify column names (samples) across datasets
+lapply(data_list, colnames)
+```
+
+#perform MOFA analysis
+```{r}
+# Create MOFA object
+mofa <- create_mofa(data_list)
+
+# Define model options
+model_opts <- get_default_model_options(mofa)
+model_opts$num_factors <- 6  # Adjust as needed
+
+# Define training options
+train_opts <- get_default_training_options(mofa)
+
+# Prepare and train the MOFA model
+output_file <- "MOFA_model_no_groups.hdf5"
+mofa <- prepare_mofa(mofa, model_options = model_opts, training_options = train_opts)
+mofa <- run_mofa(mofa, output_file)
+```
+
+#Assign groups
+```{r}
+# Define groups for 27 samples
+sample_groups <- c(
+  rep("Subj09", 6),    # Samples 1-6
+  rep("Subj10", 6),   # Samples 7-12
+  rep("Subj11", 6),   # Samples 13-18
+  rep("Subj12", 6),   # Samples 19-24
+  rep("SPQC", 3)      # Samples 25-27
+)
+
+# Extract sample names from the first view
+sample_names <- colnames(data_list[[1]])
+
+# Create metadata dataframe
+samples_metadata <- data.frame(
+  sample = sample_names,
+  group = sample_groups
+)
+
+# Assign metadata to the MOFA object
+mofa@samples_metadata <- samples_metadata
+
+# Verify metadata assignment
+head(mofa@samples_metadata)
+
+```
+#visualize factors by group
+```{r}
+
+# 1. Create the plot with fixed axis and no extra space
+plot_with_legend <- plot_factors(mofa, factors = 1:2, color_by = "group", dot_size = 6, alpha = 0.6) +
+  coord_fixed(ratio = 1) +
+  theme(
+    axis.text = element_text(size = 20, face = "bold"),
+    axis.title = element_text(size = 20, face = "bold"),
+    plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+    plot.margin = margin(0, 0, 0, 0),  # No space around plot
+    legend.text = element_text(size = 18, face = "bold"),
+    legend.title = element_blank(),
+    legend.spacing.x = unit(0, "pt"),
+    legend.spacing.y = unit(0, "pt"),
+    legend.box.margin = margin(0, 0, 0, 0),
+    legend.margin = margin(0, 0, 0, 0),
+    legend.position = "right"
+  )
+
+# 2. Extract and remove legend
+legend <- get_legend(plot_with_legend)
+plot_clean <- plot_with_legend + theme(legend.position = "none")
+
+# 3. Combine with absolutely no space between plot and legend
+final_plot <- plot_grid(
+  plot_clean, legend,
+  ncol = 2,
+  rel_widths = c(1, 0.22),  # Adjust to taste
+  align = "hv",
+  greedy = TRUE
+)
+ggsave("latent_factors_plot_1_2.png", plot = plot, width = 4, height = 3, dpi = 600)
+
+plot <- plot_factors(mofa, factors = 2:3, color_by = "group", dot_size = 3.5, alpha = 0.6)
+ggsave("latent_factors_plot_2_3.png", plot = plot, width = 4, height = 3, dpi = 600)
+
+#plot individual factors
+plot_factor(mofa, 
+  factor = 1:3,
+  color_by = "group")
+
+# Calculate variance explained
+var_exp <- calculate_variance_explained(mofa)
+
+# Extract variance explained by view
+view_var_exp <- var_exp$r2_per_factor$group1
+
+# Convert the list to a data frame
+view_var_exp_df <- as.data.frame(view_var_exp)
+
+# Add factor names as row names
+rownames(view_var_exp_df) <- paste0("Factor", seq_len(nrow(view_var_exp_df)))
+
+# Print the table
+print(view_var_exp_df)
+
+# Plot total variance explained
+plot_variance_explained(mofa, plot_total = TRUE)
+
+# Plot variance explained by each factor
+plot_variance_factor <- plot_variance_explained(mofa, plot_total = FALSE)
+print(plot_variance_factor)
+ggsave("variance_factor.png", plot = plot_variance_factor, width = 4, height = 3, dpi = 600)
+```
+#get top weights and plot unenriched, factor 1
+```{r}
+# Get weights for a specific view and factor
+weights <- get_weights(mofa, view = "Unenriched", factor = 1)
+
+# Inspect the first few weights
+head(weights)
+
+# Extract the relevant weights from the list
+weights_matrix <- weights[[1]]  # Replace `[[1]]` with the appropriate index or name
+
+# Convert to numeric and preserve feature names
+weights_vector <- as.numeric(weights_matrix)
+names(weights_vector) <- rownames(weights_matrix)  # Preserve feature names
+
+# Sort weights by absolute value
+sorted_weights <- weights_vector[order(abs(weights_vector), decreasing = TRUE)]
+
+# Extract the top 20 weights
+top_weights <- head(sorted_weights, n = 20)
+
+# Display the top weights
+print(top_weights)
+
+# Save the top 20 weights to a CSV file
+# Create a data frame for saving
+top_weights_df <- data.frame(
+  Feature = names(top_weights),
+  Weight = top_weights
+)
+
+# Write to CSV
+write.csv(top_weights_df, file = "top_20_weights_unenriched_factor1.csv", row.names = FALSE)
+```
+#plot top weights factor 1
+
+```{r}
+# Load the dataset
+unenriched_data <- read.csv("top_20_weights_unenriched_factor1.csv")  # Update with your actual file path
+
+#remove protein groups
+unenriched_data$Feature <- sub(";.*", "", unenriched_data$Feature)
+
+# Reorder the data to place the largest absolute weight at the top
+unenriched_data <- unenriched_data[order(abs(unenriched_data$Weight), decreasing = TRUE), ]
+
+# Create the Protein group plot
+unenriched_plot <- ggplot(unenriched_data, aes(x = Weight, y = reorder(Feature, abs(Weight)))) +
+  geom_bar(stat = "identity", fill = "darkgrey", color = "black", width = 0.8) +  # Darker bars and spacing
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  labs(
+    x = "Weight",
+    y = "Protein group"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 32, face = "bold", angle = 0, vjust = 0.5, hjust = 1),
+    axis.text.y = element_text(size = 30, face = "bold"),
+    axis.title.x = element_text(size = 40, face = "bold"),
+    axis.title.y = element_text(size = 40, face = "bold"),
+    plot.title = element_text(size = 30, face = "bold", hjust = 0.5),
+    plot.margin = margin(20, 20, 20, 20)  # Adjust margins
+  )
+
+# Save the plot as a PNG file
+ggsave("top_20_weights_unenriched.png", plot = unenriched_plot, width = 16, height = 14, dpi = 600)
+
+```
+#plot glycopeptide weights final
+
+```{r}
+# Get weights for a specific view and factor
+weights <- get_weights(mofa, view = "Glyco", factor = 1)
+
+# Inspect the first few weights
+head(weights)
+
+# Extract the relevant weights from the list
+weights_matrix <- weights[[1]]  # Replace `[[1]]` with the appropriate index or name
+
+# Convert to numeric and preserve feature names
+weights_vector <- as.numeric(weights_matrix)
+names(weights_vector) <- rownames(weights_matrix)  # Preserve feature names
+
+# Sort weights by absolute value
+sorted_weights <- weights_vector[order(abs(weights_vector), decreasing = TRUE)]
+
+# Extract the top 20 weights
+top_weights <- head(sorted_weights, n = 20)
+
+# Display the top weights
+print(top_weights)
+
+# Save the top 20 weights to a CSV file
+# Create a data frame for saving
+top_weights_df <- data.frame(
+  Feature = names(top_weights),
+  Weight = top_weights
+)
+
+# Write to CSV
+write.csv(top_weights_df, file = "top_20_weights_glyco_factor1.csv", row.names = FALSE)
+
+# Load the dataset
+glyco_data <- read.csv("top_20_weights_glyco_factor1.csv")  # Update with your actual file path
+
+# No abbreviation function, just use the original feature names directly
+glyco_data$ProcessedFeature <- glyco_data$Feature
+
+# Reorder the data to place the largest absolute weight at the top
+glyco_data <- glyco_data[order(abs(glyco_data$Weight), decreasing = TRUE), ]
+
+# Create the Glycopeptide plot using original feature names
+glyco_plot <- ggplot(glyco_data, aes(x = Weight, y = reorder(ProcessedFeature, abs(Weight)))) +
+  geom_bar(stat = "identity", fill = "darkgrey", color = "black", width = 0.8) +  # Darker bars and add space between bars
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  labs(
+    x = "Weight",
+    y = "Glycopeptide"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 32, face = "bold", angle = 0, vjust = 0, hjust = 1),
+    axis.text.y = element_text(size = 30, face = "bold"),
+    axis.title.x = element_text(size = 40, face = "bold"),
+    axis.title.y = element_text(size = 40, face = "bold"),
+    plot.title = element_text(size = 30, face = "bold", hjust = 0.5),
+    plot.margin = margin(20, 20, 20, 20)  # Adjust margins
+  )
+
+
+# Save the plot as a PNG file
+ggsave("top_20_weights_glycopeptide_factor_1.png", plot = glyco_plot, width = 16, height = 14, dpi = 600)
+
+# Display a message
+cat("The plot with darker bars and space between them has been saved as 'top_20_weights_glycopeptide_darker.png'\n")
+
+```
+#get top weights and plot phospho, factor 1
+```{r}
+# Get weights for a specific view and factor
+weights <- get_weights(mofa, view = "Phospho", factor = 1)
+
+# Inspect the first few weights
+head(weights)
+
+# Extract the relevant weights from the list
+weights_matrix <- weights[[1]]  # Replace `[[1]]` with the appropriate index or name
+
+# Convert to numeric and preserve feature names
+weights_vector <- as.numeric(weights_matrix)
+names(weights_vector) <- rownames(weights_matrix)  # Preserve feature names
+
+# Sort weights by absolute value
+sorted_weights <- weights_vector[order(abs(weights_vector), decreasing = TRUE)]
+
+# Extract the top 20 weights
+top_weights <- head(sorted_weights, n = 50)
+
+# Display the top weights
+print(top_weights)
+
+# Save the top 20 weights to a CSV file
+# Create a data frame for saving
+top_weights_df <- data.frame(
+  Feature = names(top_weights),
+  Weight = top_weights
+)
+
+# Write to CSV
+write.csv(top_weights_df, file = "top_50_weights_phospho_PTM_factor1.csv", row.names = FALSE)
+
+
+# Load the dataset
+phospho_data <- read.csv("top_50_weights_phospho_PTM_factor1.csv")  # Update with your actual file path
+
+# Reorder the data to place the largest absolute weight at the top
+phospho_data <- phospho_data[order(abs(phospho_data$Weight), decreasing = TRUE), ]
+
+# Create the Phosphopeptide plot
+phospho_plot <- ggplot(phospho_data, aes(x = Weight, y = reorder(Feature, abs(Weight)))) +
+  geom_bar(stat = "identity", fill = "darkgrey", color = "black", width = 0.8) +  # Darker bars and spacing
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  labs(
+    x = "Weight",
+    y = "Phosphopeptide"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 30, face = "bold", angle = 0, vjust = 0.5, hjust = 1),
+    axis.text.y = element_text(size = 30, face = "bold"),
+    axis.title.x = element_text(size = 40, face = "bold"),
+    axis.title.y = element_text(size = 40, face = "bold"),
+    plot.title = element_text(size = 30, face = "bold", hjust = 0.5),
+    plot.margin = margin(20, 20, 20, 20)  # Adjust margins
+  )
+
+# Save the plot as a PNG file
+ggsave("Wetblood_TiO_top_50_weights_phospho_PTM_factor1.png", plot = phospho_plot, width = 16, height = 14, dpi = 600)
+
+# Display a message
+#cat("The Phosphopeptide plot has been saved as 'top_20_weights_phosphopeptide_pt75.png'\n")
+
+```
+
+```{r}
+# Modify the plot to make other groups more transparent
+# First plot (factors 1 and 2)
+plot_1_2 <- plot_factors(mofa, factors = 1:2, color_by = "group", dot_size = 3.5, alpha = 0.6)
+
+# Adjust transparency for groups other than SPQC and HC
+plot_1_2 <- plot_1_2 + 
+  geom_point(data = subset(plot_1_2$data, !group %in% c("SPQC", "HC")), 
+             aes(color = group), size = 3.5, alpha = 0.2) +
+  geom_point(data = subset(plot_1_2$data, group %in% c("SPQC", "HC")), 
+             aes(color = group), size = 3.5, alpha = 0.8) +
+  scale_color_manual(values = c("SPQC" = "darkred", "HC" = "darkblue"))
+
+# Save the plot for factors 1 and 2
+ggsave("latent_factors_plot_1_2_rev.png", plot = plot_1_2, width = 4, height = 3, dpi = 600)
+
+# Second plot (factors 2 and 3)
+plot_2_3 <- plot_factors(mofa, factors = 2:3, color_by = "group", dot_size = 3.5, alpha = 0.6)
+
+# Adjust transparency for groups other than SPQC and HC
+plot_2_3 <- plot_2_3 + 
+  geom_point(data = subset(plot_2_3$data, !group %in% c("SPQC", "HC")), 
+             aes(color = group), size = 3.5, alpha = 0.2) +
+  geom_point(data = subset(plot_2_3$data, group %in% c("SPQC", "HC")), 
+             aes(color = group), size = 3.5, alpha = 0.8) +
+  scale_color_manual(values = c("SPQC" = "darkred", "HC" = "darkblue"))
+
+# Save the plot for factors 2 and 3
+ggsave("latent_factors_plot_2_3_rev.png", plot = plot_2_3, width = 4, height = 3, dpi = 600)
+
+
+```
